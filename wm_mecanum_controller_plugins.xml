@@ -1,9 +1,0 @@
-<library path="lib/libsara_base_controller">
-
-  <class name="sara_base_controller/WMMecanumController" type="sara_base_controller::WMMecanumController" base_class_type="controller_interface::ControllerBase">
-    <description>
-      Walking Machine mecanum controller.
-    </descrition>
-  </class>
-
-</library>

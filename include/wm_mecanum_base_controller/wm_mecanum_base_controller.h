@@ -12,7 +12,7 @@
 #include <boost/function.hpp>
 #include <math.h>
 
-namespace sara_base_controller_ns
+namespace wm_mecanum_base_controller_ns
 {
   /**
    * This class makes some assumptions on the model of the robot:
@@ -23,10 +23,10 @@ namespace sara_base_controller_ns
    *  - a wheel collision geometry is a cylinder in the urdf
    *  - a wheel joint frame center's vertical projection on the floor must lie within the contact patch
    */
-    class WMMecanumController : public controller_interface::Controller<hardware_interface::EffortJointInterface>
+    class WMMecanumBaseController : public controller_interface::Controller<hardware_interface::EffortJointInterface>
     {
         public:
-          WMMecanumController();
+          WMMecanumBaseController();
 
           /**
            * \brief Initialize controller
@@ -141,5 +141,5 @@ namespace sara_base_controller_ns
 
             void cmdVelCallback(const geometry_msgs::Twist& command);
     };
-    PLUGINLIB_EXPORT_CLASS(sara_base_controller_ns::WMMecanumController, controller_interface::ControllerBase);
+    PLUGINLIB_EXPORT_CLASS(wm_mecanum_base_controller_ns::WMMecanumBaseController, controller_interface::ControllerBase);
 }

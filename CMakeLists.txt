@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(sara_base_controller)
+project(mw_mecanum_base_controller)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
@@ -125,7 +125,7 @@ include_directories(
 
 ## Declare a C++ library
  add_library(${PROJECT_NAME}
-   src/sara_base_controller.cpp
+         src/wm_mecanum_base_controller.cpp
  )
 
 ## Add cmake target dependencies of the library

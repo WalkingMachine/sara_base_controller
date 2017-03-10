@@ -7,13 +7,13 @@
 #include <boost/assign.hpp>
 #include <ros/console.h>
 
-#include <sara_base_controller/sara_base_controller.h>
+#include <wm_mecanum_base_controller/wm_mecanum_base_controller.h>
 
 #define PI 3.1415926535
 
-namespace sara_base_controller_ns
+namespace wm_mecanum_base_controller_ns
 {
-    WMMecanumController::WMMecanumController():
+    WMMecanumBaseController::WMMecanumBaseController():
         command_struct_()
         ,linear_speed_(0.0)
         ,angular_speed_(0.0)
@@ -32,7 +32,7 @@ namespace sara_base_controller_ns
         ,enable_odom_tf_(false)
         {}
 
-    bool WMMecanumController::init(hardware_interface::VelocityJointInterface* hw,
+    bool WMMecanumBaseController::init(hardware_interface::VelocityJointInterface* hw,
       ros::NodeHandle& root_nh,
       ros::NodeHandle &controller_nh)
     {
@@ -137,7 +137,7 @@ namespace sara_base_controller_ns
     }
 
     // TODO update Odometry
-    // void WMMecanumController::updateOdometry(const ros::Time& time)
+    // void WMMecanumBaseController::updateOdometry(const ros::Time& time)
     // {
     //     // Compute Position
     //
@@ -193,7 +193,7 @@ namespace sara_base_controller_ns
 
     // TODO publish odometry
     // Publish robot odometry tf and topic depending
-  //   void WMMecanumController::publishOdometry(const ros::Time& time)
+  //   void WMMecanumBaseController::publishOdometry(const ros::Time& time)
   //   {
   //       // Populate odom message and publish
 	// if (odom_pub_->trylock())
@@ -227,7 +227,7 @@ namespace sara_base_controller_ns
   //       }
   //   }
 
-    void WMMecanumController::update(const ros::Time& time, const ros::Duration& period)
+    void WMMecanumBaseController::update(const ros::Time& time, const ros::Duration& period)
     {
         // Update and Publish odometry message
         if (last_state_publish_time_ + publish_period_ < time)
@@ -268,7 +268,7 @@ namespace sara_base_controller_ns
         rear_right_wheel_joint_.setCommand(W[3]);
     }
 
-    void WMMecanumController::InverseKinematics(struct Commands * cmd, double W[4])
+    void WMMecanumBaseController::InverseKinematics(struct Commands * cmd, double W[4])
     {
         // Reference:
         // Maulana, E.; Muslim, M.A.; Hendrayawan, V.,
@@ -323,7 +323,7 @@ namespace sara_base_controller_ns
         }
     }
 
-    void WMMecanumController::starting(const ros::Time& time)
+    void WMMecanumBaseController::starting(const ros::Time& time)
     {
         brake();
 
@@ -331,12 +331,12 @@ namespace sara_base_controller_ns
         last_state_publish_time_ = time;
     }
 
-    void WMMecanumController::stopping(const ros::Time& /*time*/)
+    void WMMecanumBaseController::stopping(const ros::Time& /*time*/)
     {
         brake();
     }
 
-    void WMMecanumController::brake()
+    void WMMecanumBaseController::brake()
     {
         front_left_wheel_joint_.setCommand(0.0);
         front_right_wheel_joint_.setCommand(0.0);
@@ -344,7 +344,7 @@ namespace sara_base_controller_ns
         front_right_wheel_joint_.setCommand(0.0);
     }
 
-    void WMMecanumController::cmdVelCallback(const geometry_msgs::Twist& command)
+    void WMMecanumBaseController::cmdVelCallback(const geometry_msgs::Twist& command)
     {
         command_struct_.ang.z   = command.angular.z;
         command_struct_.lin.x   = command.linear.x;
@@ -357,4 +357,4 @@ namespace sara_base_controller_ns
                                << "Lin: "   << command_struct_.lin.x << ", "
                                << "Stamp: " << command_struct_.stamp);
     }
-} // namespace sara_base_controller_ns
+} // namespace wm_mecanum_base_controller_ns
