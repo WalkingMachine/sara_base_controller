@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(mw_mecanum_base_controller)
+project(wm_mecanum_base_controller)
 
 ## Find catkin macros and libraries
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
