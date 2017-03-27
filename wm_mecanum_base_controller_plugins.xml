@@ -3,7 +3,7 @@
   <class name="wm_mecanum_base_controller/WMMecanumBaseController" type="wm_mecanum_base_controller_ns::WMMecanumBaseController" base_class_type="controller_interface::ControllerBase">
     <description>
       Walking Machine mecanum base controller.
-    </descrition>
+    </description>
   </class>
 
 </library>
