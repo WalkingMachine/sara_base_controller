@@ -1,6 +1,18 @@
 #include <controller_interface/controller.h>
 #include <hardware_interface/joint_command_interface.h>
 #include <pluginlib/class_list_macros.h>
+#include <urdf_parser/urdf_parser.h>
+#include <realtime_tools/realtime_buffer.h>
+#include <realtime_tools/realtime_publisher.h>
+#include <boost/accumulators/accumulators.hpp>
+#include <boost/accumulators/statistics/stats.hpp>
+#include <boost/accumulators/statistics/rolling_mean.hpp>
+#include <boost/function.hpp>
+#include <boost/assign.hpp>
+#include <nav_msgs/Odometry.h>
+#include <sensor_msgs/JointState.h>
+#include <tf/tfMessage.h>
+#include <wm_mecanum_base_controller/speed_limiter.h>
 
 namespace wm_mecanum_base_controller_ns
 {
@@ -45,9 +57,14 @@ namespace wm_mecanum_base_controller_ns
 
         private:
             std::string name_;
+
+            // Robot Joint States
+            sensor_msgs::JointState joint_state_;
+
             /// Odometry related:
             ros::Duration publish_period_;
             ros::Time last_state_publish_time_;
+            double publish_rate_;
 
             // Velocity command related:
             struct Commands
@@ -72,6 +89,7 @@ namespace wm_mecanum_base_controller_ns
             hardware_interface::JointHandle rear_left_wheel_joint_;
 
             // realtime stuff
+            //boost::scoped_ptr<realtime_tools::RealtimePublisher< control_msgs::JointControllerState> > controller_state_publisher_ ;
             realtime_tools::RealtimeBuffer<Commands> command_;
             Commands command_struct_;
 
@@ -83,8 +101,8 @@ namespace wm_mecanum_base_controller_ns
             // Odometry related:
             boost::shared_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry> > odom_pub_;
             boost::shared_ptr<realtime_tools::RealtimePublisher<tf::tfMessage> > tf_odom_pub_;
-            double dk_x_[4];
-            double dk_y_[4];
+            double dk_x_[4] = {1.0/4, -1.0/4, 1.0/4, -1.0/4};
+            double dk_y_[4] = {-1.0/4, -1.0/4, 1.0/4, 1.0/4};
             double dk_yaw_[4];
             double ik_[4][3];
 
@@ -113,7 +131,7 @@ namespace wm_mecanum_base_controller_ns
             double cmd_vel_timeout_;
 
             // Frame to use for the robot base:
-            std::string base_frame_id_;
+            std::string base_frame_;
 
             // Whether to publish odometry to tf or not:
             bool enable_odom_tf_;
@@ -121,6 +139,10 @@ namespace wm_mecanum_base_controller_ns
             // Speed limiters:
             Commands last1_cmd_;
             Commands last0_cmd_;
+            double last1_v_;
+            double last0_v_;
+            SpeedLimiter limiter_lin_;
+            SpeedLimiter limiter_ang_;
 
             // Speeds
             double x_linear_speed_;

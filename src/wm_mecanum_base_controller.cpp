@@ -1,19 +1,9 @@
 #include <wm_mecanum_base_controller/wm_mecanum_base_controller.h>
 #include <tf/transform_datatypes.h>
-#include <urdf_parser/urdf_parser.h>
-#include <boost/assign.hpp>
 #include <ros/console.h>
 #include <string>
 #include <iostream>
-#include <realtime_tools/realtime_buffer.h>
-#include <realtime_tools/realtime_publisher.h>
-#include <nav_msgs/Odometry.h>
-#include <tf/tfMessage.h>
 #include <ros/time.h>
-#include <boost/accumulators/accumulators.hpp>
-#include <boost/accumulators/statistics/stats.hpp>
-#include <boost/accumulators/statistics/rolling_mean.hpp>
-#include <boost/function.hpp>
 #include <math.h>
 
 #define PI 3.1415926535
@@ -42,7 +32,7 @@ namespace wm_mecanum_base_controller_ns
         ,wheel_radius_(0.0)
         ,gb_ratio_(0.0)
         ,cmd_vel_timeout_(0.5)
-        ,base_frame_id_("base_link")
+        ,base_frame_("base_link")
         ,read_state_(false)
         ,i_front_left_vel_(0)
         ,i_front_right_vel_(1)
@@ -101,9 +91,8 @@ namespace wm_mecanum_base_controller_ns
         ROS_INFO_STREAM_NAMED(name_, "Front right wheel joint name is : " + rear_right_wheel_name_);
 
         // Odometry related:
-        double publish_rate;
         controller_nh.param("publish_rate", publish_rate_, 50.0);
-        ROS_INFO_STREAM_NAMED(name_, "Controller state will be published at " << std::to_string(publish_rate_) << "Hz.");
+        ROS_INFO_STREAM_NAMED(name_, "Controller state will be published at " + std::to_string(publish_rate_) + "Hz.");
         publish_period_ = ros::Duration(1.0 / publish_rate_);
 
         // Twist command related:
@@ -111,23 +100,21 @@ namespace wm_mecanum_base_controller_ns
         ROS_INFO_STREAM_NAMED(name_, "Velocity commands will be considered old if they are older than "
                               << cmd_vel_timeout_ << "s.");
 
-        controller_nh.param("base_frame_id", base_frame_id_, base_frame_id_);
-        ROS_INFO_STREAM_NAMED(name_, "Base frame_id set to " << base_frame_id_);
+        controller_nh.param("base_frame", base_frame_, base_frame_);
+        ROS_INFO_STREAM_NAMED(name_, "Base frame_id set to " + base_frame_);
 
         controller_nh.param("enable_odom_tf", enable_odom_tf_, enable_odom_tf_);
         ROS_INFO_STREAM_NAMED(name_, "Publishing to tf is " << (enable_odom_tf_?"enabled":"disabled"));
 
         // Initialize inverce and direct kinematic matrix with param values
-        dk_x_ = {1.0/4, -1.0/4, 1.0/4, -1.0/4};
-        dk_y_ = {-1.0/4, -1.0/4, 1.0/4, 1.0/4};
-        dk_yaw_ = {-1.0/4*(x_wheel_to_center+_wheel_to_center),
-                   -1.0/4*(x_wheel_to_center+y_wheel_to_center),
-                   -1.0/4*(x_wheel_to_center+y_wheel_to_center),
-                   -1.0/4*(x_wheel_to_center+y_wheel_to_center)};
-        ik_ = {{1, -1, -1*(x_wheel_to_center_ + y_wheel_to_center_)},
-               {1, 1, (x_wheel_to_center_ + y_wheel_to_center_)},
-               {1, 1, -1*(x_wheel_to_center_ + y_wheel_to_center_)},
-               {1, -1, (x_wheel_to_center_ + y_wheel_to_center_)}};
+        for(int i = 0; i < 4; i++)
+        {
+            dk_yaw_[i] = -1.0 / 4 * (x_wheel_to_center_ + y_wheel_to_center_);
+
+            ik_[i][0] = 1;
+            ik_[i][1] = (i==0||3) ? -1 : 1;
+            ik_[i][2] = -((-1)^i)*(x_wheel_to_center_ + y_wheel_to_center_);
+        }
 
         // Get handle of the joint
         front_left_wheel_joint_    = hw->getHandle(front_left_wheel_name_);  // throws on failure
@@ -136,8 +123,8 @@ namespace wm_mecanum_base_controller_ns
         rear_right_wheel_joint_    = hw->getHandle(rear_right_wheel_name_);  // throws on failure
 
         // Start realtime state publisher
-        controller_state_publisher_.reset(
-        new realtime_tools::RealtimePublisher<control_msgs::JointControllerState>(controller_nh, "state", 1));
+        // controller_state_publisher_.reset(
+        // new realtime_tools::RealtimePublisher<control_msgs::JointControllerState>(controller_nh, "state", 1));
 
         setOdomPubFields(root_nh, controller_nh);
 
@@ -178,6 +165,7 @@ namespace wm_mecanum_base_controller_ns
         Commands curr_cmd = *(command_.readFromRT());
         const double dt = (time - curr_cmd.stamp).toSec();
         double W[4] = {0.0, 0.0, 0.0, 0.0};
+        double v;
 
         // Brake if cmd_vel has timeout:
         if (dt > cmd_vel_timeout_)
@@ -188,8 +176,12 @@ namespace wm_mecanum_base_controller_ns
         // Limit velocities and accelerations:
         const double cmd_dt(period.toSec());
 
-        limiter_lin_.limit(curr_cmd.lin, last0_cmd_.lin, last1_cmd_.lin, cmd_dt);
-        limiter_ang_.limit(curr_cmd.ang, last0_cmd_.ang, last1_cmd_.ang, cmd_dt);
+        v = sqrt(pow(curr_cmd.lin.x,2) + pow(curr_cmd.lin.y,2));
+        last1_v_ = last0_v_;
+        last0_v_ = v;
+
+        limiter_lin_.limit(v, last0_v_, last1_v_, cmd_dt);
+        limiter_ang_.limit(curr_cmd.ang.z, last0_cmd_.ang.z, last1_cmd_.ang.z, cmd_dt);
 
         last1_cmd_ = last0_cmd_;
         last0_cmd_ = curr_cmd;
@@ -275,8 +267,9 @@ namespace wm_mecanum_base_controller_ns
 
         if(read_state_)
         {
-            const double dt = (time - curr_cmd.stamp).toSec();
-            
+            const double dt = (time - last_state_publish_time_).toSec();
+            last_state_publish_time_ = time;
+
             // x axis linear velocity
             // multiply by -1.0 because of wiring
             x_linear_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * (dk_x_[0]*joint_state_.velocity[i_front_left_vel_] +
@@ -301,26 +294,27 @@ namespace wm_mecanum_base_controller_ns
             // update pose orientation
             // convert orientation to RPY
             // euler = [roll, pitch, yaw]
-            double euler[3] = tf_conversions.transformations.euler_from_quaternion([robot_pose_orientation_x_,
-                                                                                    robot_pose_orientation_y_,
-                                                                                    robot_pose_orientation_z_,
-                                                                                    robot_pose_orientation_w_])
+            double euler[3];
+            tf::Quaternion q(robot_pose_orientation_x_, robot_pose_orientation_y_, robot_pose_orientation_z_, robot_pose_orientation_w_);
+            tf::Matrix3x3 m(q);
+            m.getRPY(euler[0], euler[1], euler[2]);
+
 
             robot_heading_ = euler[2];
 
             // update x position
-            robot_pose_x_ += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]))
+            robot_pose_x_ += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]));
             // update y position
-            robot_pose_y_ += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]))
+            robot_pose_y_ += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]));
 
             // add yaw variation to RPY and convert orientation back to quaternion
             // Assuming a flat world, only roatation around Z
-            q = tf_conversions.transformations.quaternion_from_euler(0.0, 0.0, euler[2] + angular_speed_ * dt)
+            q = tf::createQuaternionFromRPY(0.0, 0.0, euler[2]);
 
-            robot_pose_orientation_x_ = q[0]
-            robot_pose_orientation_y_ = q[1]
-            robot_pose_orientation_z_ = q[2]
-            robot_pose_orientation_w_ = q[3]
+            robot_pose_orientation_x_ = q.getX();
+            robot_pose_orientation_y_ = q.getY();
+            robot_pose_orientation_z_ = q.getZ();
+            robot_pose_orientation_w_ = q.getZ();
         }
     }
 
@@ -357,7 +351,7 @@ namespace wm_mecanum_base_controller_ns
         }
     }
 
-    void MWMecanumBaseController::jointStateCallback(const sensor_msgs::JointStateConstPtr &msg)
+    void WMMecanumBaseController::jointStateCallback(const sensor_msgs::JointStateConstPtr &msg)
     {
         joint_state_ = *msg;
         read_state_ = true;
@@ -374,7 +368,7 @@ namespace wm_mecanum_base_controller_ns
                                "Added values to command. "
                                << "Ang: "   << command_struct_.ang.z << ", "
                                << "Lin: "   << command_struct_.lin.x << ", "
-                               << "Stamp: " << command_struct_.stamp);
+                               << "Stamp: " << command_struct_.stamp.toSec());
     }
 
     void WMMecanumBaseController::setOdomPubFields(ros::NodeHandle& root_nh, ros::NodeHandle& controller_nh)
@@ -397,7 +391,7 @@ namespace wm_mecanum_base_controller_ns
         // Setup odometry realtime publisher + odom message constant fields
         odom_pub_.reset(new realtime_tools::RealtimePublisher<nav_msgs::Odometry>(controller_nh, "odom", 100));
         odom_pub_->msg_.header.frame_id = "odom";
-        odom_pub_->msg_.child_frame_id = base_frame_id_;
+        odom_pub_->msg_.child_frame_id = base_frame_;
         odom_pub_->msg_.pose.pose.position.z = 0;
         odom_pub_->msg_.pose.covariance = boost::assign::list_of
                 (static_cast<double>(pose_cov_list[0])) (0)  (0)  (0)  (0)  (0)
@@ -420,7 +414,7 @@ namespace wm_mecanum_base_controller_ns
         tf_odom_pub_.reset(new realtime_tools::RealtimePublisher<tf::tfMessage>(root_nh, "/tf", 100));
         tf_odom_pub_->msg_.transforms.resize(1);
         tf_odom_pub_->msg_.transforms[0].transform.translation.z = 0.0;
-        tf_odom_pub_->msg_.transforms[0].child_frame_id = base_frame_id_;
+        tf_odom_pub_->msg_.transforms[0].child_frame_id = base_frame_;
         tf_odom_pub_->msg_.transforms[0].header.frame_id = "odom";
     }
 
