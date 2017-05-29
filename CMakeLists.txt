@@ -144,6 +144,8 @@ include_directories(
 target_link_libraries(${PROJECT_NAME}
    ${catkin_LIBRARIES}
  )
+add_definitions(-std=c++11)
+
 
 #############
 ## Install ##
