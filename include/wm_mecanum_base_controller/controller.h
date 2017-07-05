@@ -14,6 +14,9 @@
 #include <tf/tfMessage.h>
 #include <wm_mecanum_base_controller/speed_limiter.h>
 
+#ifndef PROJECT_WMMECANUMBASECONTROLLER_H
+#define PROJECT_WMMECANUMBASECONTROLLER_H
+
 namespace wm_mecanum_base_controller_ns
 {
   /**
@@ -21,7 +24,7 @@ namespace wm_mecanum_base_controller_ns
    *  - the rotation axes of wheels are collinear
    *  - the wheels are identical in radius
    */
-    class WMMecanumBaseController : public controller_interface::Controller<hardware_interface::EffortJointInterface>
+    class WMMecanumBaseController : public controller_interface::Controller<hardware_interface::VelocityJointInterface>
     {
         public:
           WMMecanumBaseController();
@@ -57,9 +60,6 @@ namespace wm_mecanum_base_controller_ns
 
         private:
             std::string name_;
-
-            // Robot Joint States
-            sensor_msgs::JointState joint_state_;
 
             /// Odometry related:
             ros::Duration publish_period_;
@@ -109,8 +109,6 @@ namespace wm_mecanum_base_controller_ns
             // Wheel separation
             double x_wheel_to_center_;
             double y_wheel_to_center_;
-            double front_dist_to_center_;
-            double rear_dist_to_center_;
 
             // Robot position
             double robot_pose_x_;
@@ -148,11 +146,6 @@ namespace wm_mecanum_base_controller_ns
             double x_linear_speed_;
             double y_linear_speed_;
             double angular_speed_;
-            double lin_max_vel_;
-            double ang_max_vel_;
-
-            // Flag to indicate if joint_state_ has been read
-            bool read_state_;
 
             // Indice for each wheel
             int i_front_left_vel_;
@@ -166,18 +159,12 @@ namespace wm_mecanum_base_controller_ns
              * \param cmd last command received
              * \param W[] array to return velocity of all joints
              */
-            void InverseKinematics(struct Commands * cmd, double W[4]);
+            void InverseKinematics(struct Commands &cmd, double W[4]);
 
             /**
             * \brief Brakes the wheels, i.e. sets the velocity to 0
             */
             void brake();
-
-            /**
-             * \brief Callback function for Joint_states
-             * \param msg the joint state message
-             */
-            void jointStateCallback(const sensor_msgs::JointStateConstPtr &msg);
 
             /**
              * \brief Velocity command callback
@@ -203,5 +190,8 @@ namespace wm_mecanum_base_controller_ns
             void setOdomPubFields(ros::NodeHandle& root_nh, ros::NodeHandle& controller_nh);
 
     };
-    PLUGINLIB_EXPORT_CLASS(wm_mecanum_base_controller_ns::WMMecanumBaseController, controller_interface::ControllerBase);
 }
+#endif //PROJECT_WMMECANUMBASECONTROLLER_H
+
+PLUGINLIB_EXPORT_CLASS(wm_mecanum_base_controller_ns::WMMecanumBaseController, controller_interface::ControllerBase);
+

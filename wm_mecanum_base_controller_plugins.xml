@@ -1,6 +1,8 @@
-<library path="lib/libsara_base_controller">
+<library path="lib/libwm_mecanum_base_controller">
 
-  <class name="wm_mecanum_base_controller/WMMecanumBaseController" type="wm_mecanum_base_controller_ns::WMMecanumBaseController" base_class_type="controller_interface::ControllerBase">
+  <class name="wm_mecanum_base_controller/WMMecanumBaseController"
+         type="wm_mecanum_base_controller_ns::WMMecanumBaseController"
+         base_class_type="controller_interface::ControllerBase">
     <description>
       Walking Machine mecanum base controller.
     </description>

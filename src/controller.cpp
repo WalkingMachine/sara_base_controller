@@ -1,4 +1,4 @@
-#include <wm_mecanum_base_controller/wm_mecanum_base_controller.h>
+#include <wm_mecanum_base_controller/controller.h>
 #include <tf/transform_datatypes.h>
 #include <ros/console.h>
 #include <string>
@@ -19,8 +19,6 @@ namespace wm_mecanum_base_controller_ns
         ,x_linear_speed_(0.0)
         ,y_linear_speed_(0.0)
         ,angular_speed_(0.0)
-        ,lin_max_vel_(0.0)
-        ,ang_max_vel_(0.0)
         ,robot_pose_x_(0.0)
         ,robot_pose_y_(0.0)
         ,robot_pose_orientation_x_(0.0)
@@ -33,7 +31,10 @@ namespace wm_mecanum_base_controller_ns
         ,gb_ratio_(0.0)
         ,cmd_vel_timeout_(0.5)
         ,base_frame_("base_link")
-        ,read_state_(false)
+        ,front_left_wheel_name_("front_left_wheel")
+        ,front_right_wheel_name_("front_right_wheel")
+        ,rear_left_wheel_name_("rear_left_wheel")
+        ,rear_right_wheel_name_("rear_right_wheel")
         ,i_front_left_vel_(0)
         ,i_front_right_vel_(1)
         ,i_rear_left_vel_(2)
@@ -63,16 +64,8 @@ namespace wm_mecanum_base_controller_ns
         ROS_INFO_STREAM_NAMED(name_, "The wheels radius is : " << wheel_radius_);
 
         // Gear box ration
-        controller_nh.param<double>("gb_ratio_", gb_ratio_, 15.0);
+        controller_nh.param<double>("gb_ratio", gb_ratio_, 15.0);
         ROS_INFO_STREAM_NAMED(name_, "The gear box ratio is : " << gb_ratio_);
-
-        // max linear velocity, in m/s
-        controller_nh.param<double>("lin_max_vel", lin_max_vel_ , 1.0);
-        ROS_INFO_STREAM_NAMED(name_, "The max linear velocity is : " << lin_max_vel_);
-
-        // max angular velocity, in rad/s
-        controller_nh.param<double>("ang_max_vel", ang_max_vel_, 1.0);
-        ROS_INFO_STREAM_NAMED(name_, "The max angular velocity is : " << ang_max_vel_);
 
         // Get joint names from the parameter server
         controller_nh.param("front_left_wheel_joint", front_left_wheel_name_, front_left_wheel_name_);
@@ -106,46 +99,49 @@ namespace wm_mecanum_base_controller_ns
         controller_nh.param("enable_odom_tf", enable_odom_tf_, enable_odom_tf_);
         ROS_INFO_STREAM_NAMED(name_, "Publishing to tf is " << (enable_odom_tf_?"enabled":"disabled"));
 
+        // Velocity and acceleration limits:
+        controller_nh.param("linear/has_velocity_limits"    , limiter_lin_.has_velocity_limits    , limiter_lin_.has_velocity_limits    );
+        controller_nh.param("linear/has_acceleration_limits", limiter_lin_.has_acceleration_limits, limiter_lin_.has_acceleration_limits);
+        controller_nh.param("linear/has_jerk_limits"        , limiter_lin_.has_jerk_limits        , limiter_lin_.has_jerk_limits        );
+        controller_nh.param("linear/max_velocity"           , limiter_lin_.max_velocity           ,  limiter_lin_.max_velocity          );
+        controller_nh.param("linear/min_velocity"           , limiter_lin_.min_velocity           , -limiter_lin_.max_velocity          );
+        controller_nh.param("linear/max_acceleration"       , limiter_lin_.max_acceleration       ,  limiter_lin_.max_acceleration      );
+        controller_nh.param("linear/min_acceleration"       , limiter_lin_.min_acceleration       , -limiter_lin_.max_acceleration      );
+        controller_nh.param("linear/max_jerk"               , limiter_lin_.max_jerk               ,  limiter_lin_.max_jerk              );
+        controller_nh.param("linear/min_jerk"               , limiter_lin_.min_jerk               , -limiter_lin_.max_jerk              );
+
+        controller_nh.param("angular/has_velocity_limits"    , limiter_ang_.has_velocity_limits    , limiter_ang_.has_velocity_limits    );
+        controller_nh.param("angular/has_acceleration_limits", limiter_ang_.has_acceleration_limits, limiter_ang_.has_acceleration_limits);
+        controller_nh.param("angular/has_jerk_limits"        , limiter_ang_.has_jerk_limits        , limiter_ang_.has_jerk_limits        );
+        controller_nh.param("angular/max_velocity"           , limiter_ang_.max_velocity           ,  limiter_ang_.max_velocity          );
+        controller_nh.param("angular/min_velocity"           , limiter_ang_.min_velocity           , -limiter_ang_.max_velocity          );
+        controller_nh.param("angular/max_acceleration"       , limiter_ang_.max_acceleration       ,  limiter_ang_.max_acceleration      );
+        controller_nh.param("angular/min_acceleration"       , limiter_ang_.min_acceleration       , -limiter_ang_.max_acceleration      );
+        controller_nh.param("angular/max_jerk"               , limiter_ang_.max_jerk               ,  limiter_ang_.max_jerk              );
+        controller_nh.param("angular/min_jerk"               , limiter_ang_.min_jerk               , -limiter_ang_.max_jerk              );
+
+
         // Initialize inverce and direct kinematic matrix with param values
         for(int i = 0; i < 4; i++)
         {
             dk_yaw_[i] = -1.0 / 4 * (x_wheel_to_center_ + y_wheel_to_center_);
 
             ik_[i][0] = 1;
-            ik_[i][1] = (i==0||3) ? -1 : 1;
-            ik_[i][2] = -((-1)^i)*(x_wheel_to_center_ + y_wheel_to_center_);
+            ik_[i][1] = (i==0||i==3) ? -1 : 1;
+            ik_[i][2] = -(pow(-1,i))*(x_wheel_to_center_ + y_wheel_to_center_);
         }
 
         // Get handle of the joint
-        front_left_wheel_joint_    = hw->getHandle(front_left_wheel_name_);  // throws on failure
-        front_right_wheel_joint_    = hw->getHandle(front_right_wheel_name_);  // throws on failure
-        rear_left_wheel_joint_    = hw->getHandle(rear_left_wheel_name_);  // throws on failure
-        rear_right_wheel_joint_    = hw->getHandle(rear_right_wheel_name_);  // throws on failure
-
-        // Start realtime state publisher
-        // controller_state_publisher_.reset(
-        // new realtime_tools::RealtimePublisher<control_msgs::JointControllerState>(controller_nh, "state", 1));
+        front_left_wheel_joint_ = hw->getHandle(front_left_wheel_name_);  // throws on failure
+        front_right_wheel_joint_ = hw->getHandle(front_right_wheel_name_);  // throws on failure
+        rear_left_wheel_joint_ = hw->getHandle(rear_left_wheel_name_);  // throws on failure
+        rear_right_wheel_joint_ = hw->getHandle(rear_right_wheel_name_);  // throws on failure
 
         setOdomPubFields(root_nh, controller_nh);
 
         sub_command_ = controller_nh.subscribe("cmd_vel", 1, &WMMecanumBaseController::cmdVelCallback, this);
-        sub_joint_state_ = controller_nh.subscribe<sensor_msgs::JointState>("/joint_states", 1, &WMMecanumBaseController::jointStateCallback, this);
 
-        // Initialize joint indexes according to joint names
-        if (read_state_)
-        {
-            std::vector<std::string> joint_names = joint_state_.name;
-            i_front_left_vel_ = find(joint_names.begin(), joint_names.end(), std::string(front_left_wheel_name_)) - joint_names.begin();
-            i_front_right_vel_= find(joint_names.begin(), joint_names.end(), std::string(front_right_wheel_name_)) - joint_names.begin();
-            i_rear_left_vel_  = find(joint_names.begin(), joint_names.end(), std::string(rear_left_wheel_name_)) - joint_names.begin();
-            i_rear_right_vel_ = find(joint_names.begin(), joint_names.end(),std:: string(rear_right_wheel_name_)) - joint_names.begin();
-            return 0;
-        }
-        else
-        {
-    	  ROS_INFO("Joint State not received");
-    	  return -1;
-        }
+        ROS_INFO_STREAM_NAMED(name_, "Init complet");
 
         return true;
     }
@@ -176,17 +172,14 @@ namespace wm_mecanum_base_controller_ns
         // Limit velocities and accelerations:
         const double cmd_dt(period.toSec());
 
-        v = sqrt(pow(curr_cmd.lin.x,2) + pow(curr_cmd.lin.y,2));
-        last1_v_ = last0_v_;
-        last0_v_ = v;
-
-        limiter_lin_.limit(v, last0_v_, last1_v_, cmd_dt);
+        limiter_lin_.limit(curr_cmd.lin.x, last0_cmd_.lin.x, last1_cmd_.lin.x, cmd_dt);
+        limiter_lin_.limit(curr_cmd.lin.y, last0_cmd_.lin.y, last1_cmd_.lin.y, cmd_dt);
         limiter_ang_.limit(curr_cmd.ang.z, last0_cmd_.ang.z, last1_cmd_.ang.z, cmd_dt);
 
         last1_cmd_ = last0_cmd_;
         last0_cmd_ = curr_cmd;
 
-        InverseKinematics(&curr_cmd, W);
+        InverseKinematics(curr_cmd, W);
 
         front_left_wheel_joint_.setCommand(W[0]);
         front_right_wheel_joint_.setCommand(W[1]);
@@ -196,18 +189,21 @@ namespace wm_mecanum_base_controller_ns
 
     void WMMecanumBaseController::starting(const ros::Time& time)
     {
+        ROS_INFO_STREAM_NAMED(name_, "Starting..");
+
         brake();
 
         // Register starting time used to keep fixed rate
         last_state_publish_time_ = time;
     }
 
-    void WMMecanumBaseController::stopping(const ros::Time& /*time*/)
+    void WMMecanumBaseController::stopping(const ros::Time&)
     {
+        ROS_INFO_STREAM_NAMED(name_, "Stopping..");
         brake();
     }
 
-    void WMMecanumBaseController::InverseKinematics(struct Commands * cmd, double W[4])
+    void WMMecanumBaseController::InverseKinematics(struct Commands &cmd, double W[4])
     {
         // Reference:
         // Maulana, E.; Muslim, M.A.; Hendrayawan, V.,
@@ -216,15 +212,10 @@ namespace wm_mecanum_base_controller_ns
         // vol., no., pp.51-56, 20-21 May 2015
 
         // linear velocity
-        double vLinear = sqrt(pow(cmd->lin.x,2) + pow(cmd->lin.y,2));
-
-        if(vLinear > lin_max_vel_)
-        {
-            vLinear = lin_max_vel_;
-        }
+        double vLinear = sqrt(pow(cmd.lin.x,2) + pow(cmd.lin.y,2));
 
         // movement orientation
-        double Heading = atan2(cmd->lin.y, cmd->lin.x);
+        double Heading = atan2(cmd.lin.y, cmd.lin.x);
 
         // x axis linear velocity
         double x_vel = vLinear * cos(Heading);
@@ -232,22 +223,17 @@ namespace wm_mecanum_base_controller_ns
         double y_vel = vLinear * sin(Heading);
 
         // YAW axis rotational velocity
-        double ang_vel = cmd->ang.z;
-
-        if(pow(ang_vel,2) > pow(ang_max_vel_,2))
-        {
-            ang_vel =  ang_max_vel_ * ang_vel / abs(ang_vel);
-        }
+        double ang_vel = cmd.ang.z;
 
         // x y and angular velocity
         double V[3] = {x_vel, y_vel, ang_vel};
 
         // matrix multiplaction
-        for(int i = 0; i < 3; i++)
+        for(int i = 0; i < 4; i++)
         {
-            for(int k = 0; k < 4; k++)
+            for(int k = 0; k < 3; k++)
             {
-                W[i] += ik_[i][k] * V[k];
+                W[i] += ik_[i][k] * V[k] * pow(-1,i+1);
             }
             W[i] = W[i] * 1/gb_ratio_ * 1/wheel_radius_;
         }
@@ -261,75 +247,95 @@ namespace wm_mecanum_base_controller_ns
         front_right_wheel_joint_.setCommand(0.0);
     }
 
-    // TODO update Odometry
     void WMMecanumBaseController::updateOdometry(const ros::Time& time)
     {
+        const double dt = (time - last_state_publish_time_).toSec();
+        last_state_publish_time_ = time;
 
-        if(read_state_)
+        double vx = (dk_x_[0]*front_left_wheel_joint_.getVelocity() +
+                     dk_x_[1]*front_right_wheel_joint_.getVelocity() +
+                     dk_x_[2]*rear_left_wheel_joint_.getVelocity() +
+                     dk_x_[3]*rear_right_wheel_joint_.getVelocity());
+
+        double vy = (dk_y_[0]*front_left_wheel_joint_.getVelocity() +
+                     dk_y_[1]*front_right_wheel_joint_.getVelocity() +
+                     dk_y_[2]*rear_left_wheel_joint_.getVelocity() +
+                     dk_y_[3]*rear_right_wheel_joint_.getVelocity());
+
+        double vyaw = (dk_yaw_[0]*front_left_wheel_joint_.getVelocity() + 
+                       dk_yaw_[1]*front_right_wheel_joint_.getVelocity() +
+                       dk_yaw_[2]*rear_left_wheel_joint_.getVelocity() +  
+                       dk_yaw_[3]*rear_right_wheel_joint_.getVelocity()); 
+
+        if(vx < 0.001)
         {
-            const double dt = (time - last_state_publish_time_).toSec();
-            last_state_publish_time_ = time;
-
+            x_linear_speed_ = 0.0;
+        }
+        else
+        {
             // x axis linear velocity
             // multiply by -1.0 because of wiring
-            x_linear_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * (dk_x_[0]*joint_state_.velocity[i_front_left_vel_] +
-                                                                  dk_x_[1]*joint_state_.velocity[i_front_right_vel_] +
-                                                                  dk_x_[2]*joint_state_.velocity[i_rear_left_vel_] +
-                                                                  dk_x_[3]*joint_state_.velocity[i_rear_right_vel_]);
+            x_linear_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * vx;
+        }
 
+        if(vy < 0.001)
+        {
+            y_linear_speed_ = 0.0;
+        }
+        else
+        {
             // y axis linear velocity
             // multiply by -1.0 because of wiring
-            y_linear_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * (dk_y_[0]*joint_state_.velocity[i_front_left_vel_] +
-                                                                  dk_y_[1]*joint_state_.velocity[i_front_right_vel_] +
-                                                                  dk_y_[2]*joint_state_.velocity[i_rear_left_vel_] +
-                                                                  dk_y_[3]*joint_state_.velocity[i_rear_right_vel_]);
-
+            y_linear_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * vy;
+        }
+        if(vyaw < 0.001)
+        {
+            angular_speed_ = 0.0;
+        }
+        else
+        {
             // yaw angular velocity
             // multiply by -1.0 because of wiring
-            angular_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * (dk_yaw_[0]*joint_state_.velocity[i_front_left_vel_] +
-                                                                 dk_yaw_[1]*joint_state_.velocity[i_front_right_vel_] +
-                                                                 dk_yaw_[2]*joint_state_.velocity[i_rear_left_vel_] +
-                                                                 dk_yaw_[3]*joint_state_.velocity[i_rear_right_vel_]);
-
-            // update pose orientation
-            // convert orientation to RPY
-            // euler = [roll, pitch, yaw]
-            double euler[3];
-            tf::Quaternion q(robot_pose_orientation_x_, robot_pose_orientation_y_, robot_pose_orientation_z_, robot_pose_orientation_w_);
-            tf::Matrix3x3 m(q);
-            m.getRPY(euler[0], euler[1], euler[2]);
-
-
-            robot_heading_ = euler[2];
-
-            // update x position
-            robot_pose_x_ += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]));
-            // update y position
-            robot_pose_y_ += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]));
-
-            // add yaw variation to RPY and convert orientation back to quaternion
-            // Assuming a flat world, only roatation around Z
-            q = tf::createQuaternionFromRPY(0.0, 0.0, euler[2]);
-
-            robot_pose_orientation_x_ = q.getX();
-            robot_pose_orientation_y_ = q.getY();
-            robot_pose_orientation_z_ = q.getZ();
-            robot_pose_orientation_w_ = q.getZ();
+            angular_speed_ = -1.0 / gb_ratio_ * wheel_radius_ * vyaw;
         }
+
+        // update pose orientation
+        // convert orientation to RPY
+        // euler = [roll, pitch, yaw]
+        double euler[3];
+        tf::Quaternion q(robot_pose_orientation_x_, robot_pose_orientation_y_, robot_pose_orientation_z_, robot_pose_orientation_w_);
+        tf::Matrix3x3 m(q);
+        m.getRPY(euler[0], euler[1], euler[2]);
+
+        robot_heading_ = euler[2];
+
+        // update x position
+        robot_pose_x_ += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]));
+        // update y position
+        robot_pose_y_ += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]));
+
+        // add yaw variation to RPY and convert orientation back to quaternion
+        // Assuming a flat world, only roatation around Z
+        q = tf::createQuaternionFromRPY(0.0, 0.0, euler[2]);
+
+        robot_pose_orientation_x_ = q.getX();
+        robot_pose_orientation_y_ = q.getY();
+        robot_pose_orientation_z_ = q.getZ();
+        robot_pose_orientation_w_ = q.getZ();
     }
 
     void WMMecanumBaseController::publishOdometry(const ros::Time& time)
     {
-       // Populate odom message and publish
+        // Populate odom message and publish
         if (odom_pub_->trylock())
         {
             // Compute and store orientation info
             const geometry_msgs::Quaternion orientation(tf::createQuaternionMsgFromYaw(robot_heading_));
 
               odom_pub_->msg_.header.stamp = time;
-	          odom_pub_->msg_.pose.pose.position.x = robot_pose_x_;
-	          odom_pub_->msg_.pose.pose.position.y =robot_pose_y_;
-	          odom_pub_->msg_.pose.pose.orientation = orientation;
+              odom_pub_->msg_.pose.pose.position.x = robot_pose_x_;
+	            odom_pub_->msg_.pose.pose.position.y =robot_pose_y_;
+	            odom_pub_->msg_.pose.pose.orientation = orientation;
               odom_pub_->msg_.twist.twist.linear.x  = x_linear_speed_;
               odom_pub_->msg_.twist.twist.linear.y  = y_linear_speed_;
               odom_pub_->msg_.twist.twist.angular.z = angular_speed_;
@@ -351,23 +357,19 @@ namespace wm_mecanum_base_controller_ns
         }
     }
 
-    void WMMecanumBaseController::jointStateCallback(const sensor_msgs::JointStateConstPtr &msg)
-    {
-        joint_state_ = *msg;
-        read_state_ = true;
-    }
-
     void WMMecanumBaseController::cmdVelCallback(const geometry_msgs::Twist& command)
     {
         command_struct_.ang.z   = command.angular.z;
         command_struct_.lin.x   = command.linear.x;
+        command_struct_.lin.y   = command.linear.y;
         command_struct_.stamp = ros::Time::now();
         command_.writeFromNonRT (command_struct_);
 
         ROS_DEBUG_STREAM_NAMED(name_,
                                "Added values to command. "
                                << "Ang: "   << command_struct_.ang.z << ", "
-                               << "Lin: "   << command_struct_.lin.x << ", "
+                               << "Lin x: "   << command_struct_.lin.x << ", "
+                               << "Lin y: "   << command_struct_.lin.y << ", "
                                << "Stamp: " << command_struct_.stamp.toSec());
     }
 
