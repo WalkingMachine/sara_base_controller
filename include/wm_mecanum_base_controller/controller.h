@@ -13,6 +13,7 @@
 #include <sensor_msgs/JointState.h>
 #include <tf/tfMessage.h>
 #include <wm_mecanum_base_controller/speed_limiter.h>
+#include <tf/LinearMath/Quaternion.h>
 
 #ifndef PROJECT_WMMECANUMBASECONTROLLER_H
 #define PROJECT_WMMECANUMBASECONTROLLER_H
@@ -101,8 +102,8 @@ namespace wm_mecanum_base_controller_ns
             // Odometry related:
             boost::shared_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry> > odom_pub_;
             boost::shared_ptr<realtime_tools::RealtimePublisher<tf::tfMessage> > tf_odom_pub_;
-            double dk_x_[4] = {1.0/4, -1.0/4, 1.0/4, -1.0/4};
-            double dk_y_[4] = {-1.0/4, -1.0/4, 1.0/4, 1.0/4};
+            double dk_x_[4];
+            double dk_y_[4];
             double dk_yaw_[4];
             double ik_[4][3];
 
@@ -111,13 +112,7 @@ namespace wm_mecanum_base_controller_ns
             double y_wheel_to_center_;
 
             // Robot position
-            double robot_pose_x_;
-            double robot_pose_y_;
-            double robot_heading_;
-            double robot_pose_orientation_x_;
-            double robot_pose_orientation_y_;
-            double robot_pose_orientation_z_;
-            double robot_pose_orientation_w_;
+            geometry_msgs::Pose pose_;
 
             // Wheel radius:
             double wheel_radius_;
@@ -137,8 +132,6 @@ namespace wm_mecanum_base_controller_ns
             // Speed limiters:
             Commands last1_cmd_;
             Commands last0_cmd_;
-            double last1_v_;
-            double last0_v_;
             SpeedLimiter limiter_lin_;
             SpeedLimiter limiter_ang_;
 

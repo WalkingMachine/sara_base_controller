@@ -19,12 +19,6 @@ namespace wm_mecanum_base_controller_ns
         ,x_linear_speed_(0.0)
         ,y_linear_speed_(0.0)
         ,angular_speed_(0.0)
-        ,robot_pose_x_(0.0)
-        ,robot_pose_y_(0.0)
-        ,robot_pose_orientation_x_(0.0)
-        ,robot_pose_orientation_y_(0.0)
-        ,robot_pose_orientation_z_(0.0)
-        ,robot_pose_orientation_w_(0.0)
         ,x_wheel_to_center_(0.0)
         ,y_wheel_to_center_(0.0)
         ,wheel_radius_(0.0)
@@ -126,10 +120,16 @@ namespace wm_mecanum_base_controller_ns
         {
             dk_yaw_[i] = -1.0 / 4 * (x_wheel_to_center_ + y_wheel_to_center_);
 
+            dk_x_[i] = (i==0||i==3) ? -1.0/4.0 : 1.0/4.0;
+            dk_y_[i] = (i==2||i==3) ? -1.0/4.0 : 1.0/4.0;
+
             ik_[i][0] = 1;
             ik_[i][1] = (i==0||i==3) ? -1 : 1;
             ik_[i][2] = -(pow(-1,i))*(x_wheel_to_center_ + y_wheel_to_center_);
         }
+
+        // Init orientation
+        pose_.orientation.x = 1.0;
 
         // Get handle of the joint
         front_left_wheel_joint_ = hw->getHandle(front_left_wheel_name_);  // throws on failure
@@ -151,7 +151,6 @@ namespace wm_mecanum_base_controller_ns
         // Update and Publish odometry message
         if (last_state_publish_time_ + publish_period_ < time)
         {
-            last_state_publish_time_ += publish_period_;
             updateOdometry(time);
             publishOdometry(time);
         }
@@ -252,22 +251,22 @@ namespace wm_mecanum_base_controller_ns
         const double dt = (time - last_state_publish_time_).toSec();
         last_state_publish_time_ = time;
 
-        double vx = (dk_x_[0]*front_left_wheel_joint_.getVelocity() +
-                     dk_x_[1]*front_right_wheel_joint_.getVelocity() +
-                     dk_x_[2]*rear_left_wheel_joint_.getVelocity() +
-                     dk_x_[3]*rear_right_wheel_joint_.getVelocity());
+          double vx = (dk_x_[0] * front_left_wheel_joint_.getVelocity() +
+                     dk_x_[1] * front_right_wheel_joint_.getVelocity() +
+                     dk_x_[2] * rear_left_wheel_joint_.getVelocity() +
+                     dk_x_[3] * rear_right_wheel_joint_.getVelocity());
 
-        double vy = (dk_y_[0]*front_left_wheel_joint_.getVelocity() +
-                     dk_y_[1]*front_right_wheel_joint_.getVelocity() +
-                     dk_y_[2]*rear_left_wheel_joint_.getVelocity() +
-                     dk_y_[3]*rear_right_wheel_joint_.getVelocity());
+        double vy = (dk_y_[0] * front_left_wheel_joint_.getVelocity() +
+                     dk_y_[1] * front_right_wheel_joint_.getVelocity() +
+                     dk_y_[2] * rear_left_wheel_joint_.getVelocity() +
+                     dk_y_[3] * rear_right_wheel_joint_.getVelocity());
 
-        double vyaw = (dk_yaw_[0]*front_left_wheel_joint_.getVelocity() + 
-                       dk_yaw_[1]*front_right_wheel_joint_.getVelocity() +
-                       dk_yaw_[2]*rear_left_wheel_joint_.getVelocity() +  
-                       dk_yaw_[3]*rear_right_wheel_joint_.getVelocity()); 
+        double vyaw = (dk_yaw_[0] * front_left_wheel_joint_.getVelocity() +
+                       dk_yaw_[1] * front_right_wheel_joint_.getVelocity() +
+                       dk_yaw_[2] * rear_left_wheel_joint_.getVelocity() +
+                       dk_yaw_[3] * rear_right_wheel_joint_.getVelocity());
 
-        if(vx < 0.001)
+      if(vx < 0.001)
         {
             x_linear_speed_ = 0.0;
         }
@@ -303,25 +302,26 @@ namespace wm_mecanum_base_controller_ns
         // convert orientation to RPY
         // euler = [roll, pitch, yaw]
         double euler[3];
-        tf::Quaternion q(robot_pose_orientation_x_, robot_pose_orientation_y_, robot_pose_orientation_z_, robot_pose_orientation_w_);
+        tf::Quaternion q(pose_.orientation.x,
+                         pose_.orientation.y,
+                         pose_.orientation.z,
+                         pose_.orientation.w);
         tf::Matrix3x3 m(q);
         m.getRPY(euler[0], euler[1], euler[2]);
 
-        robot_heading_ = euler[2];
-
         // update x position
-        robot_pose_x_ += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]));
+        pose_.position.x += dt * (x_linear_speed_ * cos(euler[2]) - y_linear_speed_ * sin(euler[2]));
         // update y position
-        robot_pose_y_ += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]));
+        pose_.position.y += dt * (x_linear_speed_ * sin(euler[2]) + y_linear_speed_ * cos(euler[2]));
 
         // add yaw variation to RPY and convert orientation back to quaternion
         // Assuming a flat world, only roatation around Z
-        q = tf::createQuaternionFromRPY(0.0, 0.0, euler[2]);
+        q = tf::createQuaternionFromRPY(0.0, 0.0, euler[2] + vyaw * dt);
 
-        robot_pose_orientation_x_ = q.getX();
-        robot_pose_orientation_y_ = q.getY();
-        robot_pose_orientation_z_ = q.getZ();
-        robot_pose_orientation_w_ = q.getZ();
+        pose_.orientation.x = q.getX();
+        pose_.orientation.y = q.getY();
+        pose_.orientation.z = q.getZ();
+        pose_.orientation.w = q.getW();
     }
 
     void WMMecanumBaseController::publishOdometry(const ros::Time& time)
@@ -329,13 +329,10 @@ namespace wm_mecanum_base_controller_ns
         // Populate odom message and publish
         if (odom_pub_->trylock())
         {
-            // Compute and store orientation info
-            const geometry_msgs::Quaternion orientation(tf::createQuaternionMsgFromYaw(robot_heading_));
-
               odom_pub_->msg_.header.stamp = time;
-              odom_pub_->msg_.pose.pose.position.x = robot_pose_x_;
-	            odom_pub_->msg_.pose.pose.position.y =robot_pose_y_;
-	            odom_pub_->msg_.pose.pose.orientation = orientation;
+              odom_pub_->msg_.pose.pose.position.x = pose_.position.x;
+	            odom_pub_->msg_.pose.pose.position.y = pose_.position.y;
+	            odom_pub_->msg_.pose.pose.orientation = pose_.orientation;
               odom_pub_->msg_.twist.twist.linear.x  = x_linear_speed_;
               odom_pub_->msg_.twist.twist.linear.y  = y_linear_speed_;
               odom_pub_->msg_.twist.twist.angular.z = angular_speed_;
@@ -345,14 +342,11 @@ namespace wm_mecanum_base_controller_ns
         // Publish tf /odom frame
         if (enable_odom_tf_ && tf_odom_pub_->trylock())
         {
-            // Compute and store orientation info
-            const geometry_msgs::Quaternion orientation(tf::createQuaternionMsgFromYaw(robot_heading_));
-
             geometry_msgs::TransformStamped& odom_frame = tf_odom_pub_->msg_.transforms[0];
             odom_frame.header.stamp = time;
-            odom_frame.transform.translation.x = robot_pose_x_;
-            odom_frame.transform.translation.y = robot_pose_y_;
-            odom_frame.transform.rotation = orientation;
+            odom_frame.transform.translation.x = pose_.position.x;
+            odom_frame.transform.translation.y = pose_.position.y;
+            odom_frame.transform.rotation = pose_.orientation;
             tf_odom_pub_->unlockAndPublish();
         }
     }
